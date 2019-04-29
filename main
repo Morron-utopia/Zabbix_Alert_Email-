@@ -1,0 +1,208 @@
+自定义zabbix告警邮件内容：
+1.添加server所对应racktable信息
+2.添加当前图像信息。
+send_rack.py 
+#!/usr/bin/python3.4
+import sys
+import os
+import smtplib
+import pymysql
+import re
+import time
+from email.mime.text import MIMEText
+from email.header import Header
+from email.mime.multipart import MIMEMultipart
+from email.mime.image import MIMEImage
+
+user='******'
+#zabbix用户名
+password='******'
+#zabbix密码
+url='http://zabbixip/zabbix/index.php'
+#zabbix首页
+period='3600'
+chart2_url='http://zabbixip/zabbix/chart2.php'
+mysql_host='localhost'
+mysql_user='***'
+mysql_pass='******'
+mysql_db='******'
+#zabbix数据库相关信息
+graph_path='/usr/lib/zabbix/alertscripts/'
+#图片保存路径
+
+def send_mail(to_list,subject,content):
+    #to_list=sys.argv[1]
+    #subject=sys.argv[2]
+    graph_name=get_graph()
+    print('subject'+subject)
+    srname=re.findall("(?<=:).+?(?=[(])",subject)
+    print(srname)
+    content=sys.argv[3]+'\n'+get_data(srname[0])
+#    content=content+'\n'+get_data(subject)
+    html_text=text_transfe_html(content)
+    #content=sys.argv[3]+sys.argv[4]
+    print(content)
+    
+    msg=MIMEMultipart('related')
+   # fp=open(graph_name,'rb')
+   # image=MIMEImage(fp.read())
+   # fp.close()
+   # image.add_header('Content-ID','<image1>')
+   #msg.attach(image)
+    html="""
+     <html>
+      <body>
+    """
+    html+=html_text
+    html+='URL: http://yourzabbixip/zabbix/charts.php?graphid=%s</br>'%graphid
+    html+='<img src="cid:image1"></br>'
+    html+="""
+      </body>
+    </html>
+    """
+    print(html)
+#    html=MIMEText(html,'html','gb2312')
+    html=MIMEText(html,'html','utf-8')
+    msg.attach(html)
+    fp=open(graph_name,'rb')
+    image=MIMEImage(fp.read())
+    fp.close()
+    image.add_header('Content-ID','<image1>')
+    msg.attach(image)
+
+    sender = '***@***.***' 
+#    msg = MIMEText(content) 
+    msg['Subject'] = subject 
+    msg['From'] = sender 
+    msg['to'] = to_list
+
+    try:
+        smtpObj = smtplib.SMTP('*.*.*.*') #smtp server
+        smtpObj.sendmail(sender, to_list, msg.as_string())
+        print ("邮件发送成功")
+        smtpObj.quit()
+    except smtplib.SMTPException as e:
+        print (e)
+             
+def get_itemid():
+    a=re.findall(r"ITEM ID:\d+",sys.argv[3])
+    #a='83025'
+    print(sys.argv[3])
+    print(a)
+    i=str(a)
+    itemid=re.findall(r"\d+",i)
+    print(itemid)
+    return str(itemid).lstrip('[\'').rstrip('\']')
+
+def get_graphid(itemid):
+    conn=pymysql.connect(mysql_host,mysql_user,mysql_pass,mysql_db)
+#    conn =MySQLdb.connect(host=mysql_host,user=mysql_user,passwd=mysql_pass,db=mysql_db,connect_timeout=20)
+    cur=conn.cursor()
+    cur.execute("SELECT graphid FROM graphs_items WHERE itemid=%s;"%itemid)
+    result=cur.fetchone()
+    cur.close()
+    conn.close()
+    graphid=re.findall(r'\d+',str(result))
+    return str(graphid).lstrip('[\'').rstrip('\']')
+      
+def get_graph():
+    time_tag=time.strftime("%Y%m%d%H%M%S", time.localtime())
+    os.system('curl -L -c /usr/lib/zabbix/alertscripts/cookie.txt --user-agent Mozilla/4.0  -d "reauest=&name=%s&password=%s&autologin=1&enter=Sign+in"  %s' %(user,password,url))
+    os.system('curl -c /usr/lib/zabbix/alertscripts/cookie.txt -b /usr/lib/zabbix/alertscripts/cookie.txt --user-agent Mozilla/4.0 -F "graphid=%s" -F "period=%s" -F "width=900" %s > /usr/lib/zabbix/alertscripts/zabbix_%s_%s.png' %(graphid,period,chart2_url,graphid,time_tag))
+    graph_name= '/usr/lib/zabbix/alertscripts/' + 'zabbix_' + graphid + '_' + time_tag  +'.png'
+    return graph_name
+
+def text_transfe_html(text):
+    d=text.splitlines()
+    html_text=''
+    for i in d:
+        i='' + i + '</br>'
+        html_text+=i + '\n'
+    return html_text
+
+def get_data(server_name):
+    FQDN='null'
+    Remote_Access='null'
+    OS_Type='null'
+    Contact_Person='null'
+    Server_containers='null'
+    Server_containers2='null'
+# 打开数据库连接
+    db = pymysql.connect("your sql ip","username","password","your sql table" )
+    # 使用cursor()方法获取操作游标 
+    cursor = db.cursor()
+    # SQL 查询语句
+    sql = "select AttributeValue.attr_id,AttributeValue.string_value,Dictionary.dict_value,AttributeValue.attr_id,EntityLink.parent_entity_id \
+            from Object \
+            left join AttributeValue on Object.id=AttributeValue.object_id \
+            left join Dictionary on AttributeValue.uint_value=Dictionary.dict_key \
+            LEFT JOIN EntityLink on Object.id=EntityLink.child_entity_id \
+            where name='%s' and(attr_id=14 or attr_id=3 or attr_id=4 or attr_id=10027)"%server_name
+    #tables="SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES where TABLE_TYPE='BASE TABLE' "
+    #print(tables)
+
+
+#    FQDN='null'
+#    Remote_Access='null'
+#    OS_Type='null'
+#    Contact_Person='null'
+
+    try:
+       # 执行SQL语句
+    #   cursor.execute(sql)
+        cursor.execute(sql)
+       # 获取所有记录列表
+        results = cursor.fetchall()
+       # print(results)
+        for row in results:
+            if row[0]==3:
+                FQDN=row[1]
+               # print('FQDN:'+FQDN)
+            elif row[0]==10027:
+                Remote_Access=row[1]
+               # print('Remote_Access:'+Remote_Access)
+            elif row[0]==4:
+                OS_Type=row[2]
+                filterstr='%GSKIP%'
+                OS_Type=re.sub(filterstr,' ',OS_Type)
+               # print('OS_Type:'+OS_Type)  
+            elif row[0]==14:
+                Contact_Person=row[1]
+               # print('Contact_Person:'+Contact_Person)
+            Server_containers=row[4]
+            #print(Server_containers)
+                  
+        Server_containers=results[0][4]
+        #print(Server_containers)    
+    except Exception as e:
+       print (e)
+    if Server_containers==None:
+        pass
+    else:
+        try:   
+            sql2="select name from Object where id='%s'"%Server_containers
+            cursor.execute(sql2)
+            results2=cursor.fetchall()
+            #print(results2)
+            for row2 in results2:
+                Server_containers2=row2[0]
+                #print('Server_containers:'+row2[0])
+        except Exception as e:
+            PRINT(E)   
+
+    info="\nRacktable Inforation: %s\nFQDN: %s\nRemote Access: %s\nContact Person: %s\nOS Type: %s.\nServer Containers: %s"%(server_name,FQDN,Remote_Access,Contact_Person,OS_Type,Server_containers2)
+    #print(info)
+
+    
+    # 关闭数据库连接
+    db.close()
+    return(info)
+
+
+
+
+
+if __name__ == "__main__": 
+    itemid=get_itemid()
+    graphid=get_graphid(itemid)
+    send_mail(sys.argv[1], sys.argv[2], sys.argv[3])
